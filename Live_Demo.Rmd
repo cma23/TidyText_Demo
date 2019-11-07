@@ -1,0 +1,98 @@
+---
+title: "Live Demo VT CMDA Capstone"
+author: "Cara Anderson, Sarah Hebert, Nicole Major"
+date: "November 8, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First we will set up our R environment by downloading 5 different librarys. The important one for TidyText is TidyText.
+```{r}
+library(readtext)
+library(ggplot2)
+library(tidytext)
+library(tidyr)
+library(dplyr)
+library(textdata)
+
+
+```
+
+Now we can import the data. 
+```{r}
+#Set the workpath
+wp = "set your workpath here to go into the negative folder"
+negReviews <- readtext(paste0(wp, "/*"))
+negReviews <- cbind(negReviews, "negative")
+names(negReviews) <- c("Document", "IMDB_Review", "Sentiment")
+
+wp = "set your workpath here to go into the positive folder"
+posReviews <- readtext(paste0(wp, "/*"))
+posReviews <- cbind(posReviews, "positive")
+names(posReviews) <- c("Document", "IMDB_Review", "Sentiment")
+
+reviews <- rbind(negReviews, posReviews)
+View(reviews)
+```
+
+Now we will turn the data into tidy data
+```{r}
+#Transform to tidy data
+reviews_df <- tibble(line = 1: nrow(reviews), 
+                     Review = reviews$IMDB_Review, 
+                     Sentiment = "Neutral")
+
+tidyReviews <- reviews_df %>% 
+  mutate(linenumber = row_number()) %>%
+    ungroup() %>% unnest_tokens(word, Review)
+
+#Typically want to remove stop words but sometimes this will get rid of that enture data point (prominent in Twitter)
+tidyReviews <- tidyReviews %>% anti_join(stop_words)
+
+View(tidyReviews)
+```
+
+Now we will look at the bing lexicon
+```{r}
+#Bing sentiments
+bing <- tidyReviews %>% inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+#Plots top 10 words that contribute to a negative/positive sentiment
+
+bing %>% group_by(sentiment) %>% top_n(10) %>% ungroup() %>%
+  mutate(word = reorder(word, n)) %>% ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") + 
+  labs(y = "Contribution to sentiment", x = NULL) + 
+  coord_flip()
+```
+
+Now we will look at the different lexicons. First we will use the inner_join method with each of the differenct lexicons. 
+```{r}
+#Gets afinn sentiments
+afinn <- tidyReviews %>% inner_join(get_sentiments("afinn")) %>%
+  group_by(index = linenumber %/% 1) %>%
+  summarize(sentiment = sum(value)) %>%
+  mutate(method = "AFINN")
+
+#Combines bing and nrc sentiments
+bing_and_nrc <- bind_rows(tidyReviews %>% inner_join(get_sentiments("bing")) %>%
+                            mutate(method = "Bing"), tidyReviews %>% inner_join(get_sentiments("nrc") %>%
+                                                                                  filter(sentiment %in% c("positive", "negative"))) %>%
+                            mutate(method = "NRC")) %>% count(method, index = linenumber %/% 1, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+```
+
+Finally, we will plot the differences.
+```{r}
+#Plot the differences
+bind_rows(afinn, bing_and_nrc) %>% ggplot(aes(index, sentiment, fill = method)) + 
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+```
